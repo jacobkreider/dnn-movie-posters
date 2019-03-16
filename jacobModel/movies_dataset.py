@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-images_folder = r'/home/jacob/MSDS-git/dnn-movie-posters/data/images/'
+images_folder = '/home/jacob/data/images/'
 test_data_ratio = 7  # 14.3%
 validation_data_ratio = 6  # 14.3%
 parsed_movies = []  # cache
@@ -155,7 +155,7 @@ def _add_to(array1d, array2d):
 
 def list_movies(year=None, genres=None):
     if len(parsed_movies) == 0:
-        data = pd.read_csv(r'/home/jacob/MSDS-git/dnn-movie-posters/data/MovieGenre.csv', encoding='ISO-8859-1')
+        data = pd.read_csv('/home/jacob/data/MovieGenre.csv', encoding='ISO-8859-1')
         for index, row in data.iterrows():
             movie = _parse_movie_row(row)
             if movie.is_valid():

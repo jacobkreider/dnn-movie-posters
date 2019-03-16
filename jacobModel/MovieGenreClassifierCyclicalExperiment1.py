@@ -1,6 +1,8 @@
-"""
-Manage movies data (extracted from /data/MovieGenre.csv).
-"""
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
 
 import io
 import os.path
@@ -10,7 +12,17 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-images_folder = r'/home/jacob/MSDS-git/dnn-movie-posters/data/images/'
+from keras.callbacks import *
+from clr_callback import *
+from keras.optimizers import Adam
+
+os.chdir('/home/jacob/data/model/')
+
+
+# In[2]:
+
+
+images_folder = '/home/jacob/data/images/'
 test_data_ratio = 7  # 14.3%
 validation_data_ratio = 6  # 14.3%
 parsed_movies = []  # cache
@@ -44,10 +56,7 @@ class Movie:
         return str(self.imdb_id) + '.jpg'
 
     def is_valid(self) -> bool:
-        return self.poster_url.startswith('https://') \
-               and 1900 <= self.year <= 2019 \
-               and len(self.title) > 1 \
-               and len(self.genres) > 1
+        return self.poster_url.startswith('https://')                and 1995 <= self.year <= 2019                and len(self.title) > 1                and len(self.genres) > 1
 
     def to_rgb_pixels(self, poster_size):
         data = open(images_folder + str(poster_size) + '/' + str(self.imdb_id) + '.jpg', "rb").read()
@@ -134,9 +143,7 @@ def _load_genre_data_per_year(year, genres, poster_ratio, data_type):
     count = 1
     for movie in list_movies(year, genres):
         if movie.poster_file_exists():
-            if (data_type == 'train' and not movie.is_test_data() and count % validation_data_ratio != 0) \
-                    or (data_type == 'validation' and not movie.is_test_data() and count % validation_data_ratio == 0) \
-                    or (data_type == 'test' and movie.is_test_data()):
+            if (data_type == 'train' and not movie.is_test_data() and count % validation_data_ratio != 0)                     or (data_type == 'validation' and not movie.is_test_data() and count % validation_data_ratio == 0)                     or (data_type == 'test' and movie.is_test_data()):
                 x = movie.to_rgb_pixels(poster_ratio)
                 y = movie.get_genres_vector(genres)
                 xs.append(x)
@@ -155,7 +162,7 @@ def _add_to(array1d, array2d):
 
 def list_movies(year=None, genres=None):
     if len(parsed_movies) == 0:
-        data = pd.read_csv(r'/home/jacob/MSDS-git/dnn-movie-posters/data/MovieGenre.csv', encoding='ISO-8859-1')
+        data = pd.read_csv('/home/jacob/data/MovieGenre.csv', encoding='ISO-8859-1')
         for index, row in data.iterrows():
             movie = _parse_movie_row(row)
             if movie.is_valid():
@@ -209,3 +216,130 @@ def list_genres(number):
         return list_genres(3) + ['Animation', 'Romance', 'Adventure', 'Horror']
     if number == 14:
         return list_genres(7) + ['Sci-Fi', 'Crime', 'Mystery', 'Thriller', 'War', 'Family', 'Western']
+
+
+# In[3]:
+
+
+import os
+import time
+
+import keras
+from keras.layers import Conv2D, MaxPooling2D
+from keras.layers import Dense, Dropout, Flatten
+from keras.models import Sequential
+
+
+# In[ ]:
+
+
+
+def get_kernel_dimensions(version, shape, divisor):
+    image_width = shape[1]
+
+    # original
+    if version == 1:
+        return 3, 3
+
+    # square 10% width
+    if version == 2:
+        return int(0.1 * image_width / divisor), int(0.1 * image_width / divisor)
+
+    # square 20% width
+    if version == 3:
+        return int(0.2 * image_width / divisor), int(0.2 * image_width / divisor)
+
+
+def build(version, min_year, max_year, genres, ratio, epochs,
+          x_train=None, y_train=None, x_validation=None, y_validation=None):
+    # log
+    print()
+    print('version:', version)
+    print('min_year:', min_year)
+    print('max_year:', max_year)
+    print('genres:', genres)
+    print('ratio:', ratio)
+    print()
+
+    # load data if not provided
+    if x_train is None or y_train is None or x_validation is None or y_validation is None:
+        begin = time.time()
+        x_train, y_train = load_genre_data(min_year, max_year, genres, ratio, 'train')
+        x_validation, y_validation = load_genre_data(min_year, max_year, genres, ratio, 'validation')
+        print('loaded in', (time.time() - begin) / 60, 'min.')
+    else:
+        print('data provided in arguments')
+
+    print()
+    print('x_train shape:', x_train.shape)
+    print(x_train.shape[0], 'train samples')
+    print(x_validation.shape[0], 'validation samples')
+
+    # build model
+    num_classes = len(y_train[0])
+    kernel_dimensions1 = get_kernel_dimensions(version, x_train.shape, 1)
+    kernel_dimensions2 = get_kernel_dimensions(version, x_train.shape, 2)
+    print('kernel_dimensions1:', kernel_dimensions1)
+    print('kernel_dimensions2:', kernel_dimensions2)
+
+    
+    clr_triangular = CyclicLR(mode='triangular2', base_lr = .000025, max_lr = .0001)
+
+    model = Sequential([
+        Conv2D(32, kernel_dimensions1, padding='same', input_shape=x_train.shape[1:], activation='relu'),
+        Conv2D(32, kernel_dimensions1, activation='relu'),
+        MaxPooling2D(pool_size=(2, 2)),
+        Dropout(0.25),
+
+        Conv2D(64, kernel_dimensions2, padding='same', activation='relu'),
+        Conv2D(64, kernel_dimensions2, activation='relu'),
+        MaxPooling2D(pool_size=(2, 2)),
+        Dropout(0.25),
+
+        Flatten(),
+        Dense(512, activation='relu'),
+        Dropout(0.5),
+        Dense(num_classes, activation='sigmoid')
+    ])
+
+    opt = keras.optimizers.rmsprop(lr=0.0001)
+    model.compile(loss='categorical_crossentropy', optimizer = opt, metrics=['accuracy'])
+    print(model.summary())
+
+    model.fit(x_train, y_train, batch_size=32, epochs=epochs,callbacks=[clr_triangular]
+                                , validation_data=(x_validation, y_validation))
+
+    # create dir if none
+    save_dir = os.path.join(os.getcwd(), 'saved_models')
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir)
+
+    # save model
+    model_file_name = 'Reduced epochs-genres'                       + '_' + str(min_year) + '_' + str(max_year)                       + '_g' + str(len(genres))                       + '_r' + str(ratio)                       + '_e' + str(epochs)                       + '_v' + str(version) + '.h5'
+
+    model_path = os.path.join(save_dir, model_file_name)
+    model.save(model_path)
+    print('Saved trained model at %s ' % model_path)
+
+
+# In[ ]:
+
+
+# Main
+
+min_year = 1995
+max_year = 2017
+epochs = 17
+genres = list_genres(7)
+
+# select a smaller ratio (e.g. 40) for quicker training
+for ratio in [30]:
+    # we load the data once for each ratio, so we can use it for multiple versions, epochs, etc.
+    x_train, y_train = load_genre_data(min_year, max_year, genres, ratio, 'train')
+    x_validation, y_validation = load_genre_data(min_year, max_year, genres, ratio, 'validation')
+    for version in [1]:
+        build(version, min_year, max_year, genres, ratio, epochs,
+                                 x_train=x_train,
+                                 y_train=y_train,
+                                 x_validation=x_validation,
+                                 y_validation=y_validation)
